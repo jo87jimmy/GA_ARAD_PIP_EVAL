@@ -1,0 +1,21 @@
+
+# 忽略數據集文件
+*.csv
+*.json
+*.jsonl
+*.parquet
+*.arrow
+*.tfrecord
+data/
+datasets/
+mvtec/
+dtd/
+# 忽略壓縮文件
+*.zip
+*.tar.gz
+*.tgz
+*.pckl
+*.pyc
+*.xgit
+*.xxgit
+*.pth
