@@ -13,7 +13,7 @@ import numpy as np
 import torch
 import cv2
 import matplotlib
-matplotlib.use('TkAgg')
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from model_unet import ReconstructiveSubNetwork, DiscriminativeSubNetwork
