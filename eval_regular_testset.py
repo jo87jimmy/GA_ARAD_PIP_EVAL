@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from model_unet import ReconstructiveSubNetwork, DiscriminativeSubNetwork
 import random
+from sklearn.metrics import roc_auc_score
 
 
 # =======================
@@ -119,6 +120,9 @@ def main(obj_names, args):
     os.makedirs(save_root, exist_ok=True)
 
     print(f"🔄 規則形狀泛化測試，共 {len(obj_names)} 個物件類別")
+
+    # 收集所有類別的 AUROC 結果
+    auroc_summary = {}  # {obj_name: auroc or None}
 
     for obj_name in obj_names:
         img_dim = 256
@@ -247,9 +251,47 @@ def main(obj_names, args):
             fp = sum(1 for s in scores_good if s >= 0.5)
             print(f"  正常誤報率 (threshold=0.5): {fp}/{len(scores_good)} "
                   f"= {fp/len(scores_good)*100:.1f}%")
+
+        # 計算 Image-level AUROC
+        gt_labels = [1 if gt == "anomaly" else 0 for _, _, _, gt in results]
+        pred_scores = [score for _, _, score, _ in results]
+        if len(set(gt_labels)) >= 2:
+            auroc = roc_auc_score(gt_labels, pred_scores)
+            print(f"  Image AUROC: {auroc:.4f}")
+            auroc_summary[obj_name] = auroc
+        else:
+            print(f"  Image AUROC: N/A (只有單一類別的樣本)")
+            auroc_summary[obj_name] = None
         print(f"{'='*70}\n")
 
-    print("🎉 規則形狀泛化測試完成！")
+    # =======================
+    # 所有類別的 Image AUROC 泛化總表
+    # =======================
+    print(f"\n{'='*50}")
+    print(f"  Image AUROC 泛化總表 (Regular Shape Testset)")
+    print(f"{'='*50}")
+    print(f"{'Category':<20} {'Image AUROC':>12}")
+    print(f"{'-'*50}")
+
+    valid_aurocs = []
+    for obj_name in obj_names:
+        if obj_name in auroc_summary:
+            auroc = auroc_summary[obj_name]
+            if auroc is not None:
+                print(f"{obj_name:<20} {auroc:>12.4f}")
+                valid_aurocs.append(auroc)
+            else:
+                print(f"{obj_name:<20} {'N/A':>12}")
+        else:
+            print(f"{obj_name:<20} {'SKIP':>12}")
+
+    print(f"{'-'*50}")
+    if valid_aurocs:
+        mean_auroc = np.mean(valid_aurocs)
+        print(f"{'Mean':<20} {mean_auroc:>12.4f}")
+    print(f"{'='*50}")
+
+    print("\n🎉 規則形狀泛化測試完成！")
 
 
 # =======================
