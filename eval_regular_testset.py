@@ -236,60 +236,80 @@ def main(obj_names, args):
 
         print(f"{'-'*70}")
         if scores_anomaly:
-            print(f"  異常圖 (regular_shape) 平均分數: {np.mean(scores_anomaly):.4f}  "
+            avg_anom = np.mean(scores_anomaly)
+            print(f"  異常圖 (regular_shape) 平均分數: {avg_anom:.4f}  "
                   f"(min={np.min(scores_anomaly):.4f}, max={np.max(scores_anomaly):.4f})")
-        if scores_good:
-            print(f"  正常圖 (good)          平均分數: {np.mean(scores_good):.4f}  "
-                  f"(min={np.min(scores_good):.4f}, max={np.max(scores_good):.4f})")
-
-        # 簡單計算 detection rate (threshold=0.5)
-        if scores_anomaly:
-            detected = sum(1 for s in scores_anomaly if s >= 0.5)
-            print(f"  異常偵測率 (threshold=0.5): {detected}/{len(scores_anomaly)} "
-                  f"= {detected/len(scores_anomaly)*100:.1f}%")
-        if scores_good:
-            fp = sum(1 for s in scores_good if s >= 0.5)
-            print(f"  正常誤報率 (threshold=0.5): {fp}/{len(scores_good)} "
-                  f"= {fp/len(scores_good)*100:.1f}%")
-
-        # 計算 Image-level AUROC
-        gt_labels = [1 if gt == "anomaly" else 0 for _, _, _, gt in results]
-        pred_scores = [score for _, _, score, _ in results]
-        if len(set(gt_labels)) >= 2:
-            auroc = roc_auc_score(gt_labels, pred_scores)
-            print(f"  Image AUROC: {auroc:.4f}")
-            auroc_summary[obj_name] = auroc
         else:
-            print(f"  Image AUROC: N/A (只有單一類別的樣本)")
-            auroc_summary[obj_name] = None
-        print(f"{'='*70}\n")
+            avg_anom = None
+
+        auroc_summary[obj_name] = avg_anom
 
     # =======================
-    # 所有類別的 Image AUROC 泛化總表
+    # 所有類別的泛化總表
     # =======================
-    print(f"\n{'='*50}")
-    print(f"  Image AUROC 泛化總表 (Regular Shape Testset)")
-    print(f"{'='*50}")
-    print(f"{'Category':<20} {'Image AUROC':>12}")
-    print(f"{'-'*50}")
-
-    valid_aurocs = []
-    for obj_name in obj_names:
-        if obj_name in auroc_summary:
-            auroc = auroc_summary[obj_name]
-            if auroc is not None:
-                print(f"{obj_name:<20} {auroc:>12.4f}")
-                valid_aurocs.append(auroc)
+    if auroc_summary:
+        # --- 終端輸出 ---
+        print(f"\n{'='*50}")
+        print(f"  所有類別 — 規則形狀泛化總表")
+        print(f"{'='*50}")
+        print(f"{'Category':<20} {'Anomaly Avg Score':>18}")
+        print(f"{'-'*50}")
+        valid_scores = []
+        for obj_name, avg_score in auroc_summary.items():
+            if avg_score is not None:
+                print(f"{obj_name:<20} {avg_score:>18.4f}")
+                valid_scores.append(avg_score)
             else:
-                print(f"{obj_name:<20} {'N/A':>12}")
-        else:
-            print(f"{obj_name:<20} {'SKIP':>12}")
+                print(f"{obj_name:<20} {'N/A':>18}")
+        print(f"{'-'*50}")
+        if valid_scores:
+            print(f"{'Overall Mean':<20} {np.mean(valid_scores):>18.4f}")
+            print(f"{'Overall Min':<20} {np.min(valid_scores):>18.4f}")
+            print(f"{'Overall Max':<20} {np.max(valid_scores):>18.4f}")
+        print(f"{'='*50}")
 
-    print(f"{'-'*50}")
-    if valid_aurocs:
-        print(f"  Image AUROC (regular_shape) 平均分數: {np.mean(valid_aurocs):.4f}  "
-              f"(min={np.min(valid_aurocs):.4f}, max={np.max(valid_aurocs):.4f})")
-    print(f"{'='*50}")
+        # --- 繪製表格圖片 ---
+        table_data = []
+        for obj_name, avg_score in auroc_summary.items():
+            table_data.append([obj_name, f"{avg_score:.4f}" if avg_score is not None else "N/A"])
+        if valid_scores:
+            table_data.append(["Overall Mean", f"{np.mean(valid_scores):.4f}"])
+            table_data.append(["Overall Min", f"{np.min(valid_scores):.4f}"])
+            table_data.append(["Overall Max", f"{np.max(valid_scores):.4f}"])
+
+        col_labels = ["Category", "Anomaly Avg Score"]
+        n_rows = len(table_data)
+        fig_height = max(2.0, 0.45 * n_rows + 1.0)
+        fig, ax = plt.subplots(figsize=(6, fig_height))
+        ax.axis('off')
+        ax.set_title("Regular Shape Generalization — Summary", fontsize=13, fontweight='bold', pad=12)
+
+        table = ax.table(cellText=table_data, colLabels=col_labels, loc='center', cellLoc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1.0, 1.4)
+
+        # 標頭樣式
+        for j in range(len(col_labels)):
+            table[0, j].set_facecolor('#4472C4')
+            table[0, j].set_text_props(color='white', fontweight='bold')
+
+        # 資料列交替顏色
+        n_categories = len(auroc_summary)
+        for i in range(1, n_rows + 1):
+            is_summary_row = (i > n_categories)
+            for j in range(len(col_labels)):
+                if is_summary_row:
+                    table[i, j].set_facecolor('#D9E2F3')
+                    table[i, j].set_text_props(fontweight='bold')
+                elif i % 2 == 0:
+                    table[i, j].set_facecolor('#F2F2F2')
+
+        plt.tight_layout()
+        table_path = os.path.join(save_root, "summary_table.png")
+        plt.savefig(table_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"\n📊 泛化總表已儲存: {table_path}")
 
     print("\n🎉 規則形狀泛化測試完成！")
 
