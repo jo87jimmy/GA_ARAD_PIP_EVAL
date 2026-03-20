@@ -287,8 +287,8 @@ def main(obj_names, args):
 
     print(f"{'-'*50}")
     if valid_aurocs:
-        mean_auroc = np.mean(valid_aurocs)
-        print(f"{'Mean':<20} {mean_auroc:>12.4f}")
+        print(f"  Image AUROC (regular_shape) 平均分數: {np.mean(valid_aurocs):.4f}  "
+              f"(min={np.min(valid_aurocs):.4f}, max={np.max(valid_aurocs):.4f})")
     print(f"{'='*50}")
 
     print("\n🎉 規則形狀泛化測試完成！")
