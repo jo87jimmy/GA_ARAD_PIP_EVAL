@@ -329,137 +329,208 @@ def main(obj_names, args):
             plt.close()
 
         # ================================================================
-        # 計算該類別的三大黃金指標
+        # 按難度等級分組計算三大黃金指標
+        # （支援舊格式「單一 regular_shape」與新格式「多難度等級」）
         # ================================================================
-        category_metrics = {"image_auroc": None, "pixel_auroc": None, "pro_score": None}
 
-        # --- 1. 影像級 AUROC ---
-        # 需要同時有正常和異常樣本才能計算 AUROC
-        if len(set(img_labels)) >= 2:
-            category_metrics["image_auroc"] = roc_auc_score(img_labels, img_scores)
-            print(f"  📈 Image-level AUROC: {category_metrics['image_auroc']:.4f}")
-        else:
-            print(f"  ⚠️ Image-level AUROC: N/A（僅有單一類別樣本，無法計算）")
+        # 辨識難度等級：所有非 'good' 的 category 子目錄
+        difficulty_levels = sorted(set(
+            cat for cat, _, _, _ in results if cat != 'good'
+        ))
+        # Good 圖片的索引（每個難度等級都會共用這些作為負樣本）
+        good_indices = [i for i, (cat, _, _, _) in enumerate(results) if cat == 'good']
 
-        # --- 2. 像素級 AUROC ---
-        # 將所有像素展平後計算 AUROC
-        all_pixel_gt = np.concatenate([g.ravel() for g in pixel_gt_list])
-        all_pixel_pred = np.concatenate([p.ravel() for p in pixel_pred_list])
-        if len(set(all_pixel_gt.astype(int))) >= 2:
-            category_metrics["pixel_auroc"] = roc_auc_score(all_pixel_gt, all_pixel_pred)
-            print(f"  📈 Pixel-level AUROC: {category_metrics['pixel_auroc']:.4f}")
-        else:
-            print(f"  ⚠️ Pixel-level AUROC: N/A（像素級僅有單一類別，無法計算）")
+        # 用於儲存該物件的per-difficulty指標
+        per_diff_metrics = {}
 
-        # --- 3. PRO-score (Per-Region Overlap) ---
-        # 僅對含有異常區域的圖片計算
-        anomaly_gt_masks = [g for g, lbl in zip(pixel_gt_list, img_labels) if lbl == 1]
-        anomaly_pred_scores = [p for p, lbl in zip(pixel_pred_list, img_labels) if lbl == 1]
-        # 確認至少有一張異常圖且其中存在異常區域
-        has_anomaly_regions = any(np.sum(g > 0.5) > 0 for g in anomaly_gt_masks) if anomaly_gt_masks else False
-        if has_anomaly_regions:
-            category_metrics["pro_score"] = compute_pro_score(pixel_gt_list, pixel_pred_list)
-            print(f"  📈 PRO-score:         {category_metrics['pro_score']:.4f}")
-        else:
-            print(f"  ⚠️ PRO-score: N/A（無異常區域可計算）")
+        def _compute_subset_metrics(indices):
+            """計算指定索引子集的三大指標（共用工具函式）"""
+            s_labels = [img_labels[i] for i in indices]
+            s_scores = [img_scores[i] for i in indices]
+            s_pgt = [pixel_gt_list[i] for i in indices]
+            s_ppred = [pixel_pred_list[i] for i in indices]
+            m = {"image_auroc": None, "pixel_auroc": None, "pro_score": None}
+            # Image AUROC
+            if len(set(s_labels)) >= 2:
+                m["image_auroc"] = roc_auc_score(s_labels, s_scores)
+            # Pixel AUROC
+            a_gt = np.concatenate([g.ravel() for g in s_pgt])
+            a_pred = np.concatenate([p.ravel() for p in s_ppred])
+            if len(set(a_gt.astype(int))) >= 2:
+                m["pixel_auroc"] = roc_auc_score(a_gt, a_pred)
+            # PRO-score
+            anom_gt = [g for g, lbl in zip(s_pgt, s_labels) if lbl == 1]
+            has_r = any(np.sum(g > 0.5) > 0 for g in anom_gt) if anom_gt else False
+            if has_r:
+                m["pro_score"] = compute_pro_score(s_pgt, s_ppred)
+            return m
 
-        # --- 逐圖日誌輸出 ---
-        print(f"\n{'='*70}")
-        print(f"  {obj_name} — 逐圖推論結果")
-        print(f"{'='*70}")
-        print(f"{'Category':<20} {'Filename':<40} {'Score':>8} {'GT':>8}")
-        print(f"{'-'*70}")
-        for cat, fname, score, gt in results:
-            tag = "✅" if (gt == "good" and score < 0.5) or (gt == "anomaly" and score >= 0.5) else "❌"
-            print(f"{cat:<20} {fname:<40} {score:>8.4f} {gt:>8} {tag}")
-        print(f"{'-'*70}")
+        # --- 按難度分組計算 ---
+        print(f"\n{'='*90}")
+        print(f"  {obj_name} — 泛化能力評估（按難度等級）")
+        print(f"{'='*90}")
+        print(f"{'Difficulty':<25} {'#Anom':>6} {'#Good':>6}   {'Image AUROC':>12} {'Pixel AUROC':>12} {'PRO-score':>12}")
+        print(f"{'-'*90}")
 
-        metrics_summary[obj_name] = category_metrics
+        for diff_name in difficulty_levels:
+            diff_indices = [i for i, (cat, _, _, _) in enumerate(results) if cat == diff_name]
+            eval_indices = good_indices + diff_indices
+            m = _compute_subset_metrics(eval_indices)
+            per_diff_metrics[diff_name] = m
+
+            i_str = f"{m['image_auroc']:.4f}" if m['image_auroc'] is not None else "N/A"
+            p_str = f"{m['pixel_auroc']:.4f}" if m['pixel_auroc'] is not None else "N/A"
+            r_str = f"{m['pro_score']:.4f}" if m['pro_score'] is not None else "N/A"
+            print(f"{diff_name:<25} {len(diff_indices):>6} {len(good_indices):>6}   {i_str:>12} {p_str:>12} {r_str:>12}")
+
+        # --- Overall（全難度彙總）---
+        all_indices = list(range(len(results)))
+        overall_m = _compute_subset_metrics(all_indices)
+        n_anom = sum(1 for cat, _, _, _ in results if cat != 'good')
+        i_str = f"{overall_m['image_auroc']:.4f}" if overall_m['image_auroc'] is not None else "N/A"
+        p_str = f"{overall_m['pixel_auroc']:.4f}" if overall_m['pixel_auroc'] is not None else "N/A"
+        r_str = f"{overall_m['pro_score']:.4f}" if overall_m['pro_score'] is not None else "N/A"
+        print(f"{'-'*90}")
+        print(f"{'Overall (all levels)':<25} {n_anom:>6} {len(good_indices):>6}   {i_str:>12} {p_str:>12} {r_str:>12}")
+        print(f"{'='*90}")
+
+        metrics_summary[obj_name] = {
+            "per_difficulty": per_diff_metrics,
+            "overall": overall_m,
+        }
 
     # =======================
-    # 所有類別的三大黃金指標總表
+    # 所有類別 — 按難度等級的泛化能力總表
     # =======================
     if metrics_summary:
-        # --- 終端輸出 ---
-        print(f"\n{'='*80}")
-        print(f"  所有類別 — 表面瑕疵檢測黃金三大指標總表")
-        print(f"{'='*80}")
-        print(f"{'Category':<20} {'Image AUROC':>14} {'Pixel AUROC':>14} {'PRO-score':>14}")
-        print(f"{'-'*80}")
+        # 收集所有出現過的難度等級（跨類別取聯集）
+        all_diff_levels = sorted(set(
+            d for v in metrics_summary.values() for d in v["per_difficulty"]
+        ))
 
-        # 收集有效數值以計算 Overall Mean
-        valid_image_aurocs = []
-        valid_pixel_aurocs = []
-        valid_pro_scores = []
+        # --- 1. 每個難度等級的跨類別平均 ---
+        print(f"\n{'='*90}")
+        print(f"  所有類別 — 泛化能力總表（按難度等級，跨類別平均）")
+        print(f"{'='*90}")
+        print(f"{'Difficulty Level':<25} {'Image AUROC':>14} {'Pixel AUROC':>14} {'PRO-score':>14}")
+        print(f"{'-'*90}")
 
-        for obj_name, metrics in metrics_summary.items():
-            img_str = f"{metrics['image_auroc']:.4f}" if metrics['image_auroc'] is not None else "N/A"
-            pix_str = f"{metrics['pixel_auroc']:.4f}" if metrics['pixel_auroc'] is not None else "N/A"
-            pro_str = f"{metrics['pro_score']:.4f}" if metrics['pro_score'] is not None else "N/A"
-            print(f"{obj_name:<20} {img_str:>14} {pix_str:>14} {pro_str:>14}")
+        # 用於繪製泛化曲線的資料
+        curve_data = {"level": [], "image_auroc": [], "pixel_auroc": [], "pro_score": []}
 
-            if metrics['image_auroc'] is not None:
-                valid_image_aurocs.append(metrics['image_auroc'])
-            if metrics['pixel_auroc'] is not None:
-                valid_pixel_aurocs.append(metrics['pixel_auroc'])
-            if metrics['pro_score'] is not None:
-                valid_pro_scores.append(metrics['pro_score'])
+        for diff in all_diff_levels:
+            vals_i, vals_p, vals_r = [], [], []
+            for obj_data in metrics_summary.values():
+                m = obj_data["per_difficulty"].get(diff)
+                if m:
+                    if m["image_auroc"] is not None: vals_i.append(m["image_auroc"])
+                    if m["pixel_auroc"] is not None: vals_p.append(m["pixel_auroc"])
+                    if m["pro_score"] is not None: vals_r.append(m["pro_score"])
 
-        print(f"{'-'*80}")
-        # 計算各指標的 Overall Mean
-        mean_img = f"{np.mean(valid_image_aurocs):.4f}" if valid_image_aurocs else "N/A"
-        mean_pix = f"{np.mean(valid_pixel_aurocs):.4f}" if valid_pixel_aurocs else "N/A"
-        mean_pro = f"{np.mean(valid_pro_scores):.4f}" if valid_pro_scores else "N/A"
-        print(f"{'Overall Mean':<20} {mean_img:>14} {mean_pix:>14} {mean_pro:>14}")
-        print(f"{'='*80}")
+            mi = np.mean(vals_i) if vals_i else None
+            mp = np.mean(vals_p) if vals_p else None
+            mr = np.mean(vals_r) if vals_r else None
+            mi_s = f"{mi:.4f}" if mi is not None else "N/A"
+            mp_s = f"{mp:.4f}" if mp is not None else "N/A"
+            mr_s = f"{mr:.4f}" if mr is not None else "N/A"
+            print(f"{diff:<25} {mi_s:>14} {mp_s:>14} {mr_s:>14}")
 
-        # --- 繪製三大指標表格圖片 ---
+            curve_data["level"].append(diff)
+            curve_data["image_auroc"].append(mi)
+            curve_data["pixel_auroc"].append(mp)
+            curve_data["pro_score"].append(mr)
+
+        # Overall（全難度全類別平均）
+        ov_i, ov_p, ov_r = [], [], []
+        for obj_data in metrics_summary.values():
+            m = obj_data["overall"]
+            if m["image_auroc"] is not None: ov_i.append(m["image_auroc"])
+            if m["pixel_auroc"] is not None: ov_p.append(m["pixel_auroc"])
+            if m["pro_score"] is not None: ov_r.append(m["pro_score"])
+        print(f"{'-'*90}")
+        ov_i_s = f"{np.mean(ov_i):.4f}" if ov_i else "N/A"
+        ov_p_s = f"{np.mean(ov_p):.4f}" if ov_p else "N/A"
+        ov_r_s = f"{np.mean(ov_r):.4f}" if ov_r else "N/A"
+        print(f"{'Overall Mean':<25} {ov_i_s:>14} {ov_p_s:>14} {ov_r_s:>14}")
+        print(f"{'='*90}")
+
+        # --- 2. 繪製泛化曲線圖（指標 vs 難度等級）---
+        valid_levels = [i for i, l in enumerate(curve_data["level"])
+                        if curve_data["image_auroc"][i] is not None]
+        if len(valid_levels) >= 2:
+            x_labels = [curve_data["level"][i].replace("level_", "L") for i in valid_levels]
+            x_pos = list(range(len(valid_levels)))
+
+            fig, ax = plt.subplots(figsize=(10, 6))
+            for metric_key, label, color, marker in [
+                ("image_auroc", "Image AUROC", "#E74C3C", "o"),
+                ("pixel_auroc", "Pixel AUROC", "#3498DB", "s"),
+                ("pro_score",   "PRO-score",   "#2ECC71", "^"),
+            ]:
+                y = [curve_data[metric_key][i] for i in valid_levels]
+                if any(v is not None for v in y):
+                    y_clean = [v if v is not None else 0 for v in y]
+                    ax.plot(x_pos, y_clean, marker=marker, label=label,
+                            color=color, linewidth=2.5, markersize=8)
+                    for xi, yi in zip(x_pos, y_clean):
+                        ax.annotate(f"{yi:.3f}", (xi, yi), textcoords="offset points",
+                                    xytext=(0, 10), ha='center', fontsize=8)
+
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels(x_labels, fontsize=9)
+            ax.set_xlabel("Difficulty Level", fontsize=12)
+            ax.set_ylabel("Metric Value", fontsize=12)
+            ax.set_title("Generalization Curve — Metrics vs Difficulty", fontsize=14, fontweight='bold')
+            ax.set_ylim(-0.05, 1.1)
+            ax.legend(fontsize=11, loc='lower left')
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            curve_path = os.path.join(save_root, "generalization_curve.png")
+            plt.savefig(curve_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            print(f"\n📈 泛化曲線圖已儲存: {curve_path}")
+
+        # --- 3. 繪製總表圖片 ---
         table_data = []
-        for obj_name, metrics in metrics_summary.items():
+        for diff in all_diff_levels:
+            cd = curve_data
+            idx = cd["level"].index(diff)
             table_data.append([
-                obj_name,
-                f"{metrics['image_auroc']:.4f}" if metrics['image_auroc'] is not None else "N/A",
-                f"{metrics['pixel_auroc']:.4f}" if metrics['pixel_auroc'] is not None else "N/A",
-                f"{metrics['pro_score']:.4f}" if metrics['pro_score'] is not None else "N/A",
+                diff,
+                f"{cd['image_auroc'][idx]:.4f}" if cd['image_auroc'][idx] is not None else "N/A",
+                f"{cd['pixel_auroc'][idx]:.4f}" if cd['pixel_auroc'][idx] is not None else "N/A",
+                f"{cd['pro_score'][idx]:.4f}" if cd['pro_score'][idx] is not None else "N/A",
             ])
-        # 附加 Overall Mean 列
-        table_data.append(["Overall Mean", mean_img, mean_pix, mean_pro])
+        table_data.append(["Overall Mean", ov_i_s, ov_p_s, ov_r_s])
 
-        col_labels = ["Category", "Image AUROC", "Pixel AUROC", "PRO-score"]
+        col_labels = ["Difficulty", "Image AUROC", "Pixel AUROC", "PRO-score"]
         n_rows = len(table_data)
         fig_height = max(2.5, 0.45 * n_rows + 1.2)
         fig, ax = plt.subplots(figsize=(10, fig_height))
         ax.axis('off')
-        ax.set_title("Surface Defect Detection — Golden Three Metrics Summary",
+        ax.set_title("Generalization Summary — Golden Three Metrics by Difficulty",
                      fontsize=13, fontweight='bold', pad=12)
-
         table = ax.table(cellText=table_data, colLabels=col_labels,
                          loc='center', cellLoc='center')
         table.auto_set_font_size(False)
         table.set_fontsize(10)
         table.scale(1.0, 1.4)
-
-        # 標頭樣式（深藍底白字）
         for j in range(len(col_labels)):
             table[0, j].set_facecolor('#4472C4')
             table[0, j].set_text_props(color='white', fontweight='bold')
-
-        # 資料列交替顏色 + Overall Mean 列特殊高亮
-        n_categories = len(metrics_summary)
+        n_diff = len(all_diff_levels)
         for i in range(1, n_rows + 1):
-            is_summary_row = (i > n_categories)
             for j in range(len(col_labels)):
-                if is_summary_row:
+                if i > n_diff:
                     table[i, j].set_facecolor('#D9E2F3')
                     table[i, j].set_text_props(fontweight='bold')
                 elif i % 2 == 0:
                     table[i, j].set_facecolor('#F2F2F2')
-
         plt.tight_layout()
-        table_path = os.path.join(save_root, "summary_table_golden_metrics.png")
+        table_path = os.path.join(save_root, "summary_table_by_difficulty.png")
         plt.savefig(table_path, dpi=150, bbox_inches='tight')
         plt.close()
-        print(f"\n📊 黃金三大指標總表已儲存: {table_path}")
+        print(f"📊 難度分級總表已儲存: {table_path}")
 
     print("\n🎉 表面瑕疵檢測評估完成！")
 
