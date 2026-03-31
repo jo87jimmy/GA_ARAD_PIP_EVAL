@@ -127,7 +127,7 @@ def compute_pro_score(gt_masks, pred_scores, num_thresholds=300, fpr_limit=0.3):
     pro_sorted = pro_valid[sort_idx]
 
     # 用 trapz 計算 AUC 並正規化到 [0, 1]
-    pro_auc = np.trapz(pro_sorted, fpr_sorted) / fpr_limit
+    pro_auc = np.trapezoid(pro_sorted, fpr_sorted) / fpr_limit
     return float(np.clip(pro_auc, 0.0, 1.0))
 
 
