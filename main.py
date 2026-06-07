@@ -61,9 +61,12 @@ def main(obj_names, args):
     print("🔄 開始測試，共有物件類別:", len(obj_names))
     for obj_name in obj_names:
         img_dim = 256
+        # student_model = ReconstructiveSubNetwork(in_channels=3,
+        #                                          out_channels=3,
+        #                                          base_width=64)
         student_model = ReconstructiveSubNetwork(in_channels=3,
                                                  out_channels=3,
-                                                 base_width=64)
+                                                 base_width=128)
         model_best_recon_weights_path = './student_model_checkpoints/' + obj_name + '_best_recon.pckl'  # ⬅️ 我的的權重路徑
         if not os.path.exists(model_best_recon_weights_path):
             print(
@@ -76,9 +79,12 @@ def main(obj_names, args):
         student_model.cuda()
         student_model.eval()
 
+        # student_seg_model = DiscriminativeSubNetwork(in_channels=6,
+        #                                              out_channels=2,
+        #                                              base_channels=32)
         student_seg_model = DiscriminativeSubNetwork(in_channels=6,
                                                      out_channels=2,
-                                                     base_channels=32)
+                                                     base_channels=64)
         model_best_seg_weights_path = './student_model_checkpoints/' + obj_name + '_best_seg.pckl'  # ⬅️ 我的的權重路徑
         if not os.path.exists(model_best_seg_weights_path):
             print(
