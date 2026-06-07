@@ -227,7 +227,10 @@ def main(obj_names, args):
         img_dim = 256
 
         # --- 載入模型 ---
-        student_model = ReconstructiveSubNetwork(in_channels=3, out_channels=3, base_width=64)
+        # 由於訓練好的權重 (checkpoint) 是基於 base_width=128 進行訓練的，
+        # 為了避免載入權重時發生維度不匹配 (RuntimeError: size mismatch)，此處必須與訓練時的架構設定保持一致。
+        # student_model = ReconstructiveSubNetwork(in_channels=3, out_channels=3, base_width=64)
+        student_model = ReconstructiveSubNetwork(in_channels=3, out_channels=3, base_width=128)
         recon_path = f'./student_model_checkpoints/{obj_name}_best_recon.pckl'
         if not os.path.exists(recon_path):
             print(f"❌ 未找到權重: {recon_path}")
@@ -235,7 +238,10 @@ def main(obj_names, args):
         student_model.load_state_dict(torch.load(recon_path, map_location=device))
         student_model.to(device).eval()
 
-        seg_model = DiscriminativeSubNetwork(in_channels=6, out_channels=2, base_channels=32)
+        # 由於訓練好的分割模型權重是基於 base_channels=64 進行訓練的，
+        # 此處同樣必須將 base_channels 從原本的 32 修改為 64，以確保權重能順利載入。
+        # seg_model = DiscriminativeSubNetwork(in_channels=6, out_channels=2, base_channels=32)
+        seg_model = DiscriminativeSubNetwork(in_channels=6, out_channels=2, base_channels=64)
         seg_path = f'./student_model_checkpoints/{obj_name}_best_seg.pckl'
         if not os.path.exists(seg_path):
             print(f"❌ 未找到權重: {seg_path}")
